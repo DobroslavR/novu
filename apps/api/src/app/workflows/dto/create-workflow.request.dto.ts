@@ -1,6 +1,6 @@
 import { IsArray, IsBoolean, IsDefined, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ICreateWorkflowDto, IPreferenceChannels } from '@novu/shared';
+import { ICreateWorkflowDto, IPreferenceChannels, NotificationTemplateCustomData } from '@novu/shared';
 
 import { PreferenceChannels } from '../../shared/dtos/preference-channels';
 import { NotificationStep } from '../../shared/dtos/notification-step';
@@ -26,7 +26,7 @@ export class CreateWorkflowRequestDto implements ICreateWorkflowDto {
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
-  @MaxLength(100)
+  @MaxLength(1000)
   description: string;
 
   @ApiProperty({
@@ -62,4 +62,8 @@ export class CreateWorkflowRequestDto implements ICreateWorkflowDto {
   @IsOptional()
   @IsString()
   blueprintId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  data?: NotificationTemplateCustomData;
 }

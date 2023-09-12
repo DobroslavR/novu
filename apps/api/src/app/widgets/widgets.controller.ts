@@ -112,6 +112,7 @@ export class WidgetsController {
       feedId: feedsQuery,
       query: { seen: query.seen, read: query.read },
       limit: query.limit != null ? parseInt(query.limit) : 10,
+      payload: query.payload,
     });
 
     return await this.getNotificationsFeedUsecase.execute(command);
@@ -126,6 +127,10 @@ export class WidgetsController {
     @Query('limit', new DefaultValuePipe(100), new LimitPipe(1, 100, true)) limit: number
   ): Promise<UnseenCountResponse> {
     const feedsQuery = this.toArray(feedId);
+
+    if (seen === undefined) {
+      seen = false;
+    }
 
     const command = GetFeedCountCommand.create({
       organizationId: subscriberSession._organizationId,
@@ -148,6 +153,10 @@ export class WidgetsController {
     @Query('limit', new DefaultValuePipe(100), new LimitPipe(1, 100, true)) limit: number
   ): Promise<UnseenCountResponse> {
     const feedsQuery = this.toArray(feedId);
+
+    if (read === undefined) {
+      read = false;
+    }
 
     const command = GetFeedCountCommand.create({
       organizationId: subscriberSession._organizationId,

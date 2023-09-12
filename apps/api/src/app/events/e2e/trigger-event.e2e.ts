@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import { expect } from 'chai';
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import { v4 as uuid } from 'uuid';
-import { differenceInMilliseconds, subMonths } from 'date-fns';
+import { differenceInMilliseconds, subDays } from 'date-fns';
 import {
   MessageRepository,
   NotificationRepository,
@@ -30,11 +30,10 @@ import {
   DelayTypeEnum,
   PreviousStepTypeEnum,
   InAppProviderIdEnum,
+  MESSAGE_IN_APP_RETENTION_DAYS,
+  MESSAGE_GENERIC_RETENTION_DAYS,
 } from '@novu/shared';
 import { EmailEventStatusEnum } from '@novu/stateless';
-
-const IN_APP_MESSAGE_EXPIRE_MONTHS = 12;
-const MESSAGE_EXPIRE_MONTHS = 1;
 
 const axiosInstance = axios.create();
 
@@ -434,10 +433,12 @@ describe(`Trigger event - ${eventTriggerPath} (POST)`, function () {
     });
 
     it('should correctly set expiration date (TTL) for notification and messages', async function () {
+      const templateName = template.triggers[0].identifier;
+
       const { data: body } = await axiosInstance.post(
         `${session.serverUrl}${eventTriggerPath}`,
         {
-          name: template.triggers[0].identifier,
+          name: templateName,
           to: {
             subscriberId: subscriber.subscriberId,
           },
@@ -453,7 +454,18 @@ describe(`Trigger event - ${eventTriggerPath} (POST)`, function () {
         }
       );
 
+      expect(body.data).to.have.all.keys('acknowledged', 'status', 'transactionId');
+      expect(body.data.acknowledged).to.equal(true);
+      expect(body.data.status).to.equal('processed');
+      expect(body.data.transaction).to.be.a.string;
+
       await session.awaitRunningJobs(template._id);
+
+      const jobs = await jobRepository.find({
+        _templateId: template._id,
+        _environmentId: session.environment._id,
+      });
+      expect(jobs.length).to.equal(2);
 
       const notifications = await notificationRepository.findBySubscriberId(session.environment._id, subscriber._id);
 
@@ -473,8 +485,8 @@ describe(`Trigger event - ${eventTriggerPath} (POST)`, function () {
       let expireAt = new Date(message?.expireAt as string);
       let createdAt = new Date(message?.createdAt as string);
 
-      let subExpireMonths = subMonths(expireAt, IN_APP_MESSAGE_EXPIRE_MONTHS);
-      let diff = differenceInMilliseconds(subExpireMonths, createdAt);
+      const subExpireYear = subDays(expireAt, MESSAGE_IN_APP_RETENTION_DAYS);
+      let diff = differenceInMilliseconds(subExpireYear, createdAt);
 
       expect(diff).to.approximately(0, 100);
 
@@ -490,8 +502,8 @@ describe(`Trigger event - ${eventTriggerPath} (POST)`, function () {
       expireAt = new Date(email?.expireAt as string);
       createdAt = new Date(email?.createdAt as string);
 
-      subExpireMonths = subMonths(expireAt, MESSAGE_EXPIRE_MONTHS);
-      diff = differenceInMilliseconds(subExpireMonths, createdAt);
+      const subExpireMonth = subDays(expireAt, MESSAGE_GENERIC_RETENTION_DAYS);
+      diff = differenceInMilliseconds(subExpireMonth, createdAt);
 
       expect(diff).to.approximately(0, 100);
     });
@@ -776,6 +788,7 @@ describe(`Trigger event - ${eventTriggerPath} (POST)`, function () {
       const existingIntegrations = await integrationRepository.find({
         _organizationId: session.organization._id,
         _environmentId: session.environment._id,
+        active: true,
       });
 
       const integrationIdsToDelete = existingIntegrations.flatMap((integration) =>
@@ -789,6 +802,21 @@ describe(`Trigger event - ${eventTriggerPath} (POST)`, function () {
       });
 
       expect(deletedIntegrations.modifiedCount).to.eql(integrationIdsToDelete.length);
+
+      await integrationRepository.update(
+        {
+          _organizationId: session.organization._id,
+          _environmentId: session.environment._id,
+          active: false,
+        },
+        {
+          $set: {
+            active: true,
+            primary: true,
+            priority: 1,
+          },
+        }
+      );
 
       const newSubscriberIdInAppNotification = SubscriberRepository.createObjectId();
       const channelType = ChannelTypeEnum.EMAIL;
@@ -837,8 +865,6 @@ describe(`Trigger event - ${eventTriggerPath} (POST)`, function () {
       const newSubscriberIdInAppNotification = SubscriberRepository.createObjectId();
       const channelType = ChannelTypeEnum.EMAIL;
 
-      template = await createTemplate(session, channelType);
-
       template = await session.createTemplate({
         steps: [
           {
@@ -880,7 +906,11 @@ describe(`Trigger event - ${eventTriggerPath} (POST)`, function () {
         check: false,
       };
 
-      await session.testAgent.post('/v1/integrations').send(payload);
+      const {
+        body: { data },
+      } = await session.testAgent.post('/v1/integrations').send(payload);
+      await session.testAgent.post(`/v1/integrations/${data._id}/set-primary`).send({});
+
       await sendTrigger(session, template, newSubscriberIdInAppNotification, {
         nested: {
           subject: 'a subject nested',
@@ -1819,8 +1849,8 @@ export async function sendTrigger(
   newSubscriberIdInAppNotification: string,
   payload: Record<string, unknown> = {},
   overrides: Record<string, unknown> = {}
-) {
-  await axiosInstance.post(
+): Promise<AxiosResponse> {
+  return await axiosInstance.post(
     `${session.serverUrl}${eventTriggerPath}`,
     {
       name: template.triggers[0].identifier,
